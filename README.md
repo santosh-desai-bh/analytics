@@ -52,7 +52,7 @@ trip_id,trip_number,contract_type,actual_end_time,total_distance,total_time,driv
 ```
 
 ## Screenshot
-![Trip Earnings Heatmap](./Screenshot-2025-02-13.png)
+![Trip Earnings Heatmap](./Screenshot 2025-02-13 at 12.13.08 AM.png)
 
 ## License
 This project is open-source and available under the MIT License.
