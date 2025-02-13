@@ -51,8 +51,8 @@ trip_id,trip_number,contract_type,actual_end_time,total_distance,total_time,driv
 7,345,230,TRIP-2TJXLMA,Fixed,"January 4, 2025, 5:38 AM",10,308.73,Venkatesh | KA52A6456,Canter 24 Feet,T Begur_JT_LH,13.17,77.34,139999.95,"January 1, 2025","January 15, 2025",15,9333.33
 ```
 
-## Screenshot
-![Trip Earnings Heatmap](./Screenshot 2025-02-13 at 12.13.08 AM.png)
+## Demo
+Live demo deployed at https://bh-analytics.streamlit.app/
 
 ## License
 This project is open-source and available under the MIT License.
