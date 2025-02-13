@@ -1,13 +1,14 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
+import plotly.graph_objects as go
 import uuid
-import time
 
 def initialize_session():
     """Initialize the session state with a unique identifier."""
     if 'run_id' not in st.session_state:
         st.session_state.run_id = str(uuid.uuid4())
+    if 'fig' not in st.session_state:
+        st.session_state.fig = None
 
 def load_data(uploaded_file):
     """Load and clean data from the uploaded CSV file."""
@@ -51,37 +52,51 @@ def process_data(df):
     unique_months = sorted(month_labels.keys())
     return df, month_labels, unique_months
 
-def update_heatmap(df, month_labels, selected_month_label, selected_models, center_lat, center_long):
-    """Update the heatmap based on the selected month and vehicle models."""
+def initialize_heatmap(df, month_labels, selected_month_label, center_lat, center_long):
+    """Initialize the heatmap based on the selected month."""
+    selected_month = [k for k, v in month_labels.items() if v == selected_month_label][0]
+    filtered_df = df[(df["trip_month"] == selected_month)]
+    
+    fig = go.Figure(go.Scattermapbox(
+        lat=filtered_df["lat"],
+        lon=filtered_df["long"],
+        mode='markers',
+        marker=go.scattermapbox.Marker(
+            size=10,  # Fixed size
+            color=filtered_df["per_trip_earning"],
+            colorscale='Viridis',
+            showscale=True
+        ),
+        text=filtered_df.apply(lambda row: f"Trip Number: {row['trip_number']}<br>Driver: {row['driver']}<br>Vehicle Model: {row['vehicle_model']}<br>Hub: {row['hub']}<br>Per Trip Earning: {row['per_trip_earning']}", axis=1),
+    ))
+
+    fig.update_layout(
+        title=f"🚕 Trip Earnings Heatmap - {selected_month_label}",
+        mapbox_style="open-street-map",
+        mapbox=dict(
+            center=dict(lat=center_lat, lon=center_long),
+            zoom=10
+        ),
+        height=650,
+        margin=dict(l=0, r=0, t=40, b=0)
+    )
+
+    return fig
+
+def update_heatmap(fig, df, month_labels, selected_month_label, selected_models):
+    """Update the heatmap markers based on the selected month and vehicle models."""
     selected_month = [k for k, v in month_labels.items() if v == selected_month_label][0]
     filtered_df = df[(df["trip_month"] == selected_month)]
     if selected_models:
         filtered_df = filtered_df[filtered_df["vehicle_model"].isin(selected_models)]
     
-    fig = px.scatter_mapbox(
-        filtered_df,
-        lat="lat",
-        lon="long",
-        color="per_trip_earning",
-        size="per_trip_earning",
-        hover_data=["trip_number", "driver", "vehicle_model", "hub", "per_trip_earning"],
-        title=f"🚕 Trip Earnings Heatmap - {selected_month_label}",
-        color_continuous_scale="viridis",  # Green → Yellow → Purple
-        mapbox_style="open-street-map",  # Clearer base map
-        zoom=10,  # Dynamic Zoom
-        center={"lat": center_lat, "lon": center_long},  # Center Map
-        opacity=0.7
-    )
+    fig.data[0].lat = filtered_df["lat"]
+    fig.data[0].lon = filtered_df["long"]
+    fig.data[0].marker.color = filtered_df["per_trip_earning"]
+    fig.data[0].text = filtered_df.apply(lambda row: f"Trip Number: {row['trip_number']}<br>Driver: {row['driver']}<br>Vehicle Model: {row['vehicle_model']}<br>Hub: {row['hub']}<br>Per Trip Earning: {row['per_trip_earning']}", axis=1)
+    fig.update_layout(title=f"🚕 Trip Earnings Heatmap - {selected_month_label}")
 
-    # Enable zoom, pan, and make the map full width
-    fig.update_layout(
-        height=650,  # Make map bigger
-        dragmode="pan",  # Allow dragging
-        margin=dict(l=0, r=0, t=40, b=0)  # Remove extra margins
-    )
-
-    unique_key = f"{selected_month_label}-{st.session_state.run_id}-{uuid.uuid4()}"
-    st.plotly_chart(fig, use_container_width=True, key=unique_key)
+    return fig
 
 def main():
     """Main function to run the Streamlit app."""
@@ -121,18 +136,19 @@ def main():
                 if not filtered_df.empty:
                     center_lat, center_long = filtered_df["lat"].mean(), filtered_df["long"].mean()
 
-                    # Initial plot
-                    update_heatmap(df, month_labels, default_month_label, selected_models, center_lat, center_long)
+                    # Initialize plot if not already initialized
+                    if st.session_state.fig is None:
+                        st.session_state.fig = initialize_heatmap(df, month_labels, default_month_label, center_lat, center_long)
+                    
+                    # Display plot
+                    plotly_chart = st.plotly_chart(st.session_state.fig, use_container_width=True, key=f"init-{st.session_state.run_id}")
 
-                    # Playback slider
-                    st.write("### 📅 Playback Slider")
-                    playback = st.button("Play")
+                    # Trip month slider
+                    selected_month_label = st.select_slider("Trip Month", options=list(month_labels.values()), value=default_month_label)
 
-                    if playback:
-                        for month in unique_months:
-                            month_label = month_labels[month]
-                            update_heatmap(df, month_labels, month_label, selected_models, center_lat, center_long)
-                            time.sleep(1)
+                    # Update heatmap based on selected month
+                    st.session_state.fig = update_heatmap(st.session_state.fig, df, month_labels, selected_month_label, selected_models)
+                    plotly_chart.plotly_chart(st.session_state.fig, use_container_width=True, key=f"update-{selected_month_label}-{st.session_state.run_id}")
 
         except Exception as e:
             st.error(f"❌ Error generating heatmap: {e}")
