@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import uuid
+import time
 
 def initialize_session():
     """Initialize the session state with a unique identifier."""
@@ -33,6 +34,9 @@ def load_data(uploaded_file):
 
         # Drop rows with missing critical values
         df.dropna(subset=["lat", "long", "actual_end_time", "per_trip_earning", "vehicle_model"], inplace=True)
+
+        # Ensure per_trip_earning values are non-negative
+        df = df[df["per_trip_earning"] >= 0]
 
         return df
 
@@ -76,7 +80,8 @@ def update_heatmap(df, month_labels, selected_month_label, selected_models, cent
         margin=dict(l=0, r=0, t=40, b=0)  # Remove extra margins
     )
 
-    st.plotly_chart(fig, use_container_width=True, key=f"{selected_month_label}-{st.session_state.run_id}")
+    unique_key = f"{selected_month_label}-{st.session_state.run_id}-{uuid.uuid4()}"
+    st.plotly_chart(fig, use_container_width=True, key=unique_key)
 
 def main():
     """Main function to run the Streamlit app."""
@@ -119,12 +124,15 @@ def main():
                     # Initial plot
                     update_heatmap(df, month_labels, default_month_label, selected_models, center_lat, center_long)
 
-                    # Move Month-Year Slider BELOW the map
-                    selected_month_label = st.select_slider("📅 Select a Month-Year", options=[month_labels[m] for m in unique_months], value=default_month_label)
-                    update_heatmap(df, month_labels, selected_month_label, selected_models, center_lat, center_long)
+                    # Playback slider
+                    st.write("### 📅 Playback Slider")
+                    playback = st.button("Play")
 
-                else:
-                    st.warning(f"⚠️ No trips found for {default_month_label} and selected vehicle models.")
+                    if playback:
+                        for month in unique_months:
+                            month_label = month_labels[month]
+                            update_heatmap(df, month_labels, month_label, selected_models, center_lat, center_long)
+                            time.sleep(1)
 
         except Exception as e:
             st.error(f"❌ Error generating heatmap: {e}")
