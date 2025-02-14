@@ -1,7 +1,9 @@
 import streamlit as st
 import pandas as pd
-import plotly.graph_objects as go
+import folium
+from streamlit_folium import st_folium
 import uuid
+import branca.colormap as cm
 
 def initialize_session():
     """Initialize the session state with a unique identifier."""
@@ -10,6 +12,7 @@ def initialize_session():
     if 'fig' not in st.session_state:
         st.session_state.fig = None
 
+@st.cache_data
 def load_data(uploaded_file):
     """Load and clean data from the uploaded CSV file."""
     try:
@@ -19,11 +22,7 @@ def load_data(uploaded_file):
             st.error("❌ No file uploaded. Please upload a valid CSV file.")
             return None
 
-        # Convert datetime columns
-        for col in ["actual_end_time", "start_datetime", "end_datetime"]:
-            df[col] = pd.to_datetime(df[col], errors="coerce")
-
-        # Convert lat, long, per_trip_earning to numeric
+        df["actual_end_time"] = pd.to_datetime(df["actual_end_time"], errors="coerce")
         df["lat"] = pd.to_numeric(df["lat"], errors="coerce")
         df["long"] = pd.to_numeric(df["long"], errors="coerce")
         df["per_trip_earning"] = (
@@ -32,11 +31,7 @@ def load_data(uploaded_file):
             .str.replace(",", "", regex=True)
             .astype(float, errors="ignore")
         )
-
-        # Drop rows with missing critical values
         df.dropna(subset=["lat", "long", "actual_end_time", "per_trip_earning", "vehicle_model"], inplace=True)
-
-        # Ensure per_trip_earning values are non-negative
         df = df[df["per_trip_earning"] >= 0]
 
         return df
@@ -56,107 +51,78 @@ def initialize_heatmap(df, month_labels, selected_month_label, center_lat, cente
     """Initialize the heatmap based on the selected month."""
     selected_month = [k for k, v in month_labels.items() if v == selected_month_label][0]
     filtered_df = df[(df["trip_month"] == selected_month)]
-    
-    fig = go.Figure(go.Scattermapbox(
-        lat=filtered_df["lat"],
-        lon=filtered_df["long"],
-        mode='markers',
-        marker=go.scattermapbox.Marker(
-            size=10,  # Fixed size
-            color=filtered_df["per_trip_earning"],
-            colorscale='Viridis',
-            showscale=True
-        ),
-        text=filtered_df.apply(lambda row: f"Trip Number: {row['trip_number']}<br>Driver: {row['driver']}<br>Vehicle Model: {row['vehicle_model']}<br>Hub: {row['hub']}<br>Per Trip Earning: {row['per_trip_earning']}", axis=1)
-    ))
 
-    fig.update_layout(
-        title=f"🚕 Trip Earnings Heatmap - {selected_month_label}",
-        mapbox_style="open-street-map",
-        mapbox=dict(
-            center=dict(lat=center_lat, lon=center_long),
-            zoom=10
-        ),
-        height=650,
-        margin=dict(l=0, r=0, t=40, b=0)
-    )
+    map_center = [center_lat, center_long]
+    m = folium.Map(location=map_center, zoom_start=10)
 
-    return fig
+    colormap = cm.LinearColormap(colors=['green', 'orange', 'red'], vmin=filtered_df["per_trip_earning"].min(), vmax=filtered_df["per_trip_earning"].max(), caption='Per Trip Earning')
 
-def update_heatmap(fig, df, month_labels, selected_month_label, selected_models, earnings_range):
-    """Update the heatmap markers based on the selected month, vehicle models, and earnings range."""
+    for idx, row in filtered_df.iterrows():
+        folium.Marker(
+            location=[row['lat'], row['long']],
+            popup=(
+                f"Trip Number: {row['trip_number']}<br>"
+                f"Driver: {row['driver']}<br>"
+                f"Vehicle Model: {row['vehicle_model']}<br>"
+                f"Hub: {row['hub']}<br>"
+                f"Per Trip Earning: {row['per_trip_earning']}"
+            ),
+            icon=folium.Icon(color='blue', icon_color=colormap(row['per_trip_earning'])),
+            tooltip=f"Per Trip Earning: {row['per_trip_earning']}"
+        ).add_to(m)
+
+    colormap.add_to(m)
+
+    return m
+
+def update_heatmap(m, df, month_labels, selected_month_label, selected_models):
+    """Update the heatmap markers based on the selected month and vehicle models."""
     selected_month = [k for k, v in month_labels.items() if v == selected_month_label][0]
     filtered_df = df[(df["trip_month"] == selected_month)]
     if selected_models:
         filtered_df = filtered_df[filtered_df["vehicle_model"].isin(selected_models)]
-    
-    # Filter by earnings range
-    filtered_df = filtered_df[(filtered_df["per_trip_earning"] >= earnings_range[0]) & (filtered_df["per_trip_earning"] <= earnings_range[1])]
-    
-    fig.data[0].lat = filtered_df["lat"]
-    fig.data[0].lon = filtered_df["long"]
-    fig.data[0].marker.color = filtered_df["per_trip_earning"]
-    fig.data[0].text = filtered_df.apply(lambda row: f"Trip Number: {row['trip_number']}<br>Driver: {row['driver']}<br>Vehicle Model: {row['vehicle_model']}<br>Hub: {row['hub']}<br>Per Trip Earning: {row['per_trip_earning']}", axis=1)
-    fig.update_layout(title=f"🚕 Trip Earnings Heatmap - {selected_month_label}")
 
-    return fig
+    return initialize_heatmap(filtered_df, month_labels, selected_month_label, filtered_df["lat"].mean(), filtered_df["long"].mean())
 
 def main():
     """Main function to run the Streamlit app."""
     st.title("🚕 Trip Earnings Heatmap")
 
-    # Initialize a unique session identifier
     initialize_session()
 
-    # File uploader
     uploaded_file = st.file_uploader("Upload Trip Data CSV", type=["csv"])
 
-    # Load Data
     df = load_data(uploaded_file)
 
     if df is not None:
         try:
-            # Process Data
             df, month_labels, unique_months = process_data(df)
 
             if len(unique_months) == 0:
                 st.warning("⚠️ No valid date data found. Please check your file.")
             else:
-                # Vehicle Model Filter (Initially empty)
                 all_vehicle_models = df["vehicle_model"].unique().tolist()
                 selected_models = st.multiselect("🚛 Select Vehicle Models", all_vehicle_models)
 
-                # Default to the latest available month
                 default_month = unique_months[-1]
                 default_month_label = month_labels[default_month]
 
-                # Initial Filter
                 filtered_df = df[(df["trip_month"] == default_month)]
                 if selected_models:
                     filtered_df = filtered_df[filtered_df["vehicle_model"].isin(selected_models)]
 
-                # Earnings range slider
-                min_earning = df["per_trip_earning"].min()
-                max_earning = df["per_trip_earning"].max()
-                earnings_range = st.slider("Select Earnings Range", min_value=min_earning, max_value=max_earning, value=(min_earning, max_earning))
-
-                # Auto-zoom to focus area
                 if not filtered_df.empty:
                     center_lat, center_long = filtered_df["lat"].mean(), filtered_df["long"].mean()
 
-                    # Initialize plot if not already initialized
                     if st.session_state.fig is None:
                         st.session_state.fig = initialize_heatmap(df, month_labels, default_month_label, center_lat, center_long)
-                    
-                    # Display plot
-                    plotly_chart = st.plotly_chart(st.session_state.fig, use_container_width=True, key=f"init-{st.session_state.run_id}")
 
-                    # Trip month slider
+                    st_folium(st.session_state.fig, width=700, height=500)
+
                     selected_month_label = st.select_slider("Trip Month", options=list(month_labels.values()), value=default_month_label)
 
-                    # Update heatmap based on selected month, vehicle models, and earnings range
-                    st.session_state.fig = update_heatmap(st.session_state.fig, df, month_labels, selected_month_label, selected_models, earnings_range)
-                    plotly_chart.plotly_chart(st.session_state.fig, use_container_width=True, key=f"update-{selected_month_label}-{st.session_state.run_id}")
+                    st.session_state.fig = update_heatmap(st.session_state.fig, df, month_labels, selected_month_label, selected_models)
+                    st_folium(st.session_state.fig, width=700, height=500)
 
         except Exception as e:
             st.error(f"❌ Error generating heatmap: {e}")
