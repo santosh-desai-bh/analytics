@@ -58,8 +58,13 @@ def initialize_heatmap(df, month_labels, selected_month_label, center_lat, cente
     colormap = cm.LinearColormap(colors=['green', 'orange', 'red'], vmin=filtered_df["per_trip_earning"].min(), vmax=filtered_df["per_trip_earning"].max(), caption='Per Trip Earning')
 
     for idx, row in filtered_df.iterrows():
-        folium.Marker(
+        folium.CircleMarker(
             location=[row['lat'], row['long']],
+            radius=7,
+            color=colormap(row['per_trip_earning']),
+            fill=True,
+            fill_color=colormap(row['per_trip_earning']),
+            fill_opacity=0.7,
             popup=(
                 f"Trip Number: {row['trip_number']}<br>"
                 f"Driver: {row['driver']}<br>"
@@ -67,7 +72,6 @@ def initialize_heatmap(df, month_labels, selected_month_label, center_lat, cente
                 f"Hub: {row['hub']}<br>"
                 f"Per Trip Earning: {row['per_trip_earning']}"
             ),
-            icon=folium.Icon(color='blue', icon_color=colormap(row['per_trip_earning'])),
             tooltip=f"Per Trip Earning: {row['per_trip_earning']}"
         ).add_to(m)
 
@@ -90,7 +94,7 @@ def main():
 
     initialize_session()
 
-    uploaded_file = st.file_uploader("Upload Trip Data CSV", type=["csv"])
+    uploaded_file = st.file_uploader("Upload Trip Data CSV", type=["csv"], key="file_uploader")
 
     df = load_data(uploaded_file)
 
@@ -102,7 +106,7 @@ def main():
                 st.warning("⚠️ No valid date data found. Please check your file.")
             else:
                 all_vehicle_models = df["vehicle_model"].unique().tolist()
-                selected_models = st.multiselect("🚛 Select Vehicle Models", all_vehicle_models)
+                selected_models = st.multiselect("🚛 Select Vehicle Models", all_vehicle_models, key="vehicle_models")
 
                 default_month = unique_months[-1]
                 default_month_label = month_labels[default_month]
@@ -117,12 +121,12 @@ def main():
                     if st.session_state.fig is None:
                         st.session_state.fig = initialize_heatmap(df, month_labels, default_month_label, center_lat, center_long)
 
-                    st_folium(st.session_state.fig, width=700, height=500)
+                    st_folium(st.session_state.fig, width=700, height=500, key=f"init-{st.session_state.run_id}")
 
-                    selected_month_label = st.select_slider("Trip Month", options=list(month_labels.values()), value=default_month_label)
+                    selected_month_label = st.select_slider("Trip Month", options=list(month_labels.values()), value=default_month_label, key="trip_month")
 
                     st.session_state.fig = update_heatmap(st.session_state.fig, df, month_labels, selected_month_label, selected_models)
-                    st_folium(st.session_state.fig, width=700, height=500)
+                    st_folium(st.session_state.fig, width=700, height=500, key=f"update-{selected_month_label}-{st.session_state.run_id}")
 
         except Exception as e:
             st.error(f"❌ Error generating heatmap: {e}")
