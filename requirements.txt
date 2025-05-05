@@ -1,11 +1,6 @@
-# Core geospatial libraries
-geopandas==1.0.1  # Latest stable version you already have
-shapely>=2.0.0    # Required by newer geopandas
-pyproj>=3.3.0     # Newer version for better compatibility
-fiona>=1.9.0      # Newer version required by geopandas 1.0+
-
-# Visualization and data processing
-streamlit>=1.27.0  # Recent stable version
-pydeck>=0.8.0     # For map visualizations
-numpy>=1.24.0     # Compatible with pandas requirements
-pandas>=2.0.0     # Required by geopandas 1.0+
+streamlit==1.27.0
+pandas==2.0.3
+numpy==1.24.3
+folium==0.14.0
+streamlit-folium==0.13.0
+plotly==5.15.0
