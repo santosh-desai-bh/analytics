@@ -41,7 +41,7 @@ costs_file = st.sidebar.file_uploader("Upload Costs CSV", type=['csv'])
 st.sidebar.header("Analysis Settings")
 analysis_type = st.sidebar.radio(
     "Select Analysis View",
-    ["Network Flow", "Density Analysis", "Weight-Distance Analysis"]
+    ["Network Flow", "Density Analysis", "Weight-Distance Analysis", "Driver Cost Analysis"]
 )
 
 # Network type filter - only show when Network Flow is selected
@@ -806,6 +806,487 @@ elif analysis_type == "Weight-Distance Analysis":
         # Display customer metrics table
         st.subheader("Customer Weight-Distance Metrics")
         st.dataframe(customer_metrics)
+
+elif analysis_type == "Driver Cost Analysis":
+    st.subheader("Driver Cost & Efficiency Analysis")
+    
+    # Check if costs data is available
+    if costs_df is None:
+        st.error("Please upload the Driver Costs CSV file to perform cost analysis.")
+        st.stop()
+    
+    # Setup tabs for different analysis views
+    cost_tabs = st.tabs(["Driver Overview", "Hub Cost Analysis", "Customer Cost Analysis", "Vehicle Analysis"])
+    
+    with cost_tabs[0]:
+        st.subheader("Driver Efficiency Overview")
+        
+        # Clean and prepare data
+        # First, identify the driver ID column
+        driver_id_col = None
+        for col in costs_df.columns:
+            if 'driver_id' in col.lower():
+                driver_id_col = col
+                break
+        
+        if driver_id_col is None:
+            st.error("Could not find driver_id column in costs data.")
+        else:
+            # Extract key metrics
+            try:
+                # Select relevant columns - be flexible about column names
+                relevant_cols = [driver_id_col]
+                
+                # Find name column
+                name_col = None
+                for col in costs_df.columns:
+                    if col.lower() == 'driver':
+                        name_col = col
+                        break
+                
+                if name_col:
+                    relevant_cols.append(name_col)
+                
+                # Find vehicle/model columns
+                vehicle_col = None
+                for col in costs_df.columns:
+                    if 'vehicle' in col.lower() or 'model' in col.lower() or 'registration' in col.lower():
+                        vehicle_col = col
+                        relevant_cols.append(col)
+                
+                # Find cost column
+                cost_col = None
+                for col in costs_df.columns:
+                    if 'cost' in col.lower() and 'total' in col.lower():
+                        cost_col = col
+                        relevant_cols.append(col)
+                        break
+                
+                # Find order columns
+                order_cols = []
+                for col in costs_df.columns:
+                    if ('first_mile' in col.lower() or 'last_mile' in col.lower() or 'mid_mile' in col.lower()) and 'total' in col.lower():
+                        order_cols.append(col)
+                        relevant_cols.append(col)
+                
+                # Find total orders column
+                total_orders_col = None
+                for col in costs_df.columns:
+                    if 'total_orders' in col.lower():
+                        total_orders_col = col
+                        relevant_cols.append(col)
+                        break
+                
+                # Find CPO column
+                cpo_col = None
+                for col in costs_df.columns:
+                    if 'cpo' in col.lower() and 'overall' in col.lower():
+                        cpo_col = col
+                        relevant_cols.append(col)
+                        break
+                
+                # Create driver summary dataframe
+                driver_summary = costs_df[relevant_cols].copy()
+                
+                # Convert cost columns to numeric (they might be strings)
+                for col in driver_summary.columns:
+                    if 'cost' in col.lower() or 'cpo' in col.lower() or 'total' in col.lower():
+                        try:
+                            driver_summary[col] = pd.to_numeric(driver_summary[col], errors='coerce')
+                        except:
+                            st.warning(f"Could not convert {col} to numeric values.")
+                
+                # Sort by total cost
+                if cost_col:
+                    driver_summary = driver_summary.sort_values(cost_col, ascending=False)
+                
+                # Display top drivers by cost
+                st.subheader("Top Drivers by Cost")
+                st.dataframe(driver_summary.head(10))
+                
+                # Create visualization of driver costs
+                if cost_col and name_col:
+                    # Create bar chart for top 15 drivers by cost
+                    top_drivers = driver_summary.sort_values(cost_col, ascending=False).head(15)
+                    
+                    fig = px.bar(
+                        top_drivers,
+                        x=name_col,
+                        y=cost_col,
+                        title="Top 15 Drivers by Total Cost",
+                        labels={name_col: "Driver", cost_col: "Total Cost"}
+                    )
+                    fig.update_layout(xaxis_tickangle=-45)
+                    st.plotly_chart(fig)
+                
+                # Create efficiency metrics
+                if total_orders_col and cost_col:
+                    # Calculate orders per rupee
+                    driver_summary['orders_per_rupee'] = driver_summary[total_orders_col] / driver_summary[cost_col]
+                    
+                    # Show most efficient drivers (orders per rupee)
+                    st.subheader("Most Efficient Drivers (Orders per Rupee)")
+                    efficient_drivers = driver_summary.sort_values('orders_per_rupee', ascending=False).head(10)
+                    st.dataframe(efficient_drivers[[name_col, total_orders_col, cost_col, 'orders_per_rupee']])
+                    
+                    # Handle NaN values in the size parameter
+                    driver_summary_clean = driver_summary.copy()
+                    if total_orders_col in driver_summary_clean.columns:
+                        # Replace NaN values with 0 or min value for size
+                        min_size = driver_summary_clean[total_orders_col].min()
+                        driver_summary_clean[total_orders_col] = driver_summary_clean[total_orders_col].fillna(min_size if pd.notna(min_size) else 1)
+                    
+                    # Visualize efficiency
+                    fig = px.scatter(
+                        driver_summary_clean,
+                        x=cost_col,
+                        y=total_orders_col,
+                        hover_name=name_col if name_col else None,
+                        title="Driver Efficiency (Orders vs Cost)",
+                        labels={cost_col: "Total Cost", total_orders_col: "Total Orders"},
+                        color='orders_per_rupee',
+                        color_continuous_scale="Viridis",
+                        size=total_orders_col,
+                        size_max=20
+                    )
+                    
+                    # Add reference lines for orders per rupee
+                    max_cost = driver_summary[cost_col].max() * 1.1
+                    
+                    for opr in [0.05, 0.1, 0.2, 0.5]:
+                        fig.add_trace(
+                            go.Scatter(
+                                x=[0, max_cost],
+                                y=[0, max_cost * opr],
+                                mode='lines',
+                                line=dict(dash='dash', width=1, color='rgba(100,100,100,0.3)'),
+                                name=f'{opr} orders per rupee',
+                                hoverinfo='name'
+                            )
+                        )
+                    
+                    st.plotly_chart(fig)
+            except Exception as e:
+                st.error(f"Error processing driver data: {e}")
+                st.write("Costs dataframe preview:")
+                st.write(costs_df.head())
+    
+    with cost_tabs[1]:
+        st.subheader("Hub Cost Analysis")
+        
+        # Check if we have both hub information and costs
+        if last_mile_df is None:
+            st.error("Last mile data required for hub cost analysis.")
+        else:
+            # Try to identify hub column
+            hub_column = None
+            if 'hub' in last_mile_df.columns:
+                hub_column = 'hub'
+            else:
+                possible_hub_cols = [col for col in last_mile_df.columns if 'hub' in col.lower() and not col.endswith('_lat') and not col.endswith('_long')]
+                hub_column = possible_hub_cols[0] if possible_hub_cols else None
+            
+            # Try to identify driver column in last_mile_df
+            driver_col_lm = None
+            for col in last_mile_df.columns:
+                if col.lower() == 'driver' or col.lower() == 'driver_id':
+                    driver_col_lm = col
+                    break
+            
+            if hub_column and driver_col_lm and driver_id_col:
+                try:
+                    # Create a mapping from driver to hub
+                    driver_hub_map = last_mile_df.groupby(driver_col_lm)[hub_column].agg(lambda x: x.value_counts().index[0]).reset_index()
+                    driver_hub_map.columns = [driver_col_lm, 'primary_hub']
+                    
+                    # Merge costs data with driver-hub mapping
+                    # First, ensure driver columns are compatible
+                    if driver_col_lm != driver_id_col:
+                        # Try to convert one to match the other
+                        merged_costs = costs_df.merge(driver_hub_map, left_on=driver_id_col, right_on=driver_col_lm, how='left')
+                    else:
+                        merged_costs = costs_df.merge(driver_hub_map, on=driver_col_lm, how='left')
+                    
+                    # Group by hub
+                    if cost_col and total_orders_col:
+                        hub_costs = merged_costs.groupby('primary_hub').agg(
+                            total_cost=(cost_col, 'sum'),
+                            total_orders=(total_orders_col, 'sum'),
+                            driver_count=(driver_id_col, 'nunique')
+                        ).reset_index()
+                        
+                        # Calculate efficiency metrics
+                        hub_costs['cost_per_order'] = hub_costs['total_cost'] / hub_costs['total_orders']
+                        hub_costs['orders_per_driver'] = hub_costs['total_orders'] / hub_costs['driver_count']
+                        
+                        # Sort by total cost
+                        hub_costs = hub_costs.sort_values('total_cost', ascending=False)
+                        
+                        # Display hub cost table
+                        st.dataframe(hub_costs)
+                        
+                        # Create hub cost charts
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            # Bar chart of total cost by hub
+                            fig = px.bar(
+                                hub_costs,
+                                x='primary_hub',
+                                y='total_cost',
+                                title="Total Cost by Hub",
+                                labels={'primary_hub': "Hub", 'total_cost': "Total Cost"}
+                            )
+                            fig.update_layout(xaxis_tickangle=-45)
+                            st.plotly_chart(fig)
+                        
+                        with col2:
+                            # Bar chart of cost per order by hub
+                            fig = px.bar(
+                                hub_costs,
+                                x='primary_hub',
+                                y='cost_per_order',
+                                title="Cost per Order by Hub",
+                                labels={'primary_hub': "Hub", 'cost_per_order': "Cost per Order"}
+                            )
+                            fig.update_layout(xaxis_tickangle=-45)
+                            st.plotly_chart(fig)
+                        
+                        # Handle NaN values in the size parameter
+                        hub_costs_clean = hub_costs.copy()
+                        hub_costs_clean['driver_count'] = hub_costs_clean['driver_count'].fillna(1)
+                        
+                        # Bubble chart showing the relationship between total orders, drivers, and cost
+                        fig = px.scatter(
+                            hub_costs_clean,
+                            x='total_orders',
+                            y='total_cost',
+                            size='driver_count',
+                            color='cost_per_order',
+                            hover_name='primary_hub',
+                            title="Hub Efficiency Analysis",
+                            labels={
+                                'total_orders': "Total Orders", 
+                                'total_cost': "Total Cost",
+                                'driver_count': "Number of Drivers",
+                                'cost_per_order': "Cost per Order"
+                            }
+                        )
+                        st.plotly_chart(fig)
+                except Exception as e:
+                    st.error(f"Error in hub cost analysis: {e}")
+            else:
+                st.error("Required columns for hub cost analysis not found.")
+    
+    with cost_tabs[2]:
+        st.subheader("Customer Cost Analysis")
+        
+        # Check if we have customer information
+        if 'customer' not in last_mile_df.columns:
+            st.error("Customer column not found in last mile data.")
+        elif driver_col_lm is None:
+            st.error("Driver column not found in last mile data.")
+        else:
+            try:
+                # Create a mapping from driver to customer
+                driver_customer_map = last_mile_df.groupby(driver_col_lm)['customer'].apply(list).reset_index()
+                driver_customer_map['customer_count'] = driver_customer_map['customer'].apply(lambda x: len(set(x)))
+                driver_customer_map['primary_customer'] = driver_customer_map['customer'].apply(
+                    lambda x: max(set(x), key=x.count) if x else None
+                )
+                
+                # Merge with costs data
+                if driver_col_lm != driver_id_col:
+                    # Try to convert one to match the other
+                    merged_costs = costs_df.merge(driver_customer_map[[driver_col_lm, 'primary_customer', 'customer_count']], 
+                                                 left_on=driver_id_col, right_on=driver_col_lm, how='left')
+                else:
+                    merged_costs = costs_df.merge(driver_customer_map[[driver_col_lm, 'primary_customer', 'customer_count']], 
+                                                 on=driver_col_lm, how='left')
+                
+                # Group by customer
+                if cost_col and total_orders_col:
+                    customer_costs = merged_costs.groupby('primary_customer').agg(
+                        total_cost=(cost_col, 'sum'),
+                        total_orders=(total_orders_col, 'sum'),
+                        driver_count=(driver_id_col, 'nunique')
+                    ).reset_index()
+                    
+                    # Calculate efficiency metrics
+                    customer_costs['cost_per_order'] = customer_costs['total_cost'] / customer_costs['total_orders']
+                    customer_costs['orders_per_driver'] = customer_costs['total_orders'] / customer_costs['driver_count']
+                    
+                    # Sort by total cost
+                    customer_costs = customer_costs.sort_values('total_cost', ascending=False)
+                    
+                    # Display customer cost table
+                    st.dataframe(customer_costs)
+                    
+                    # Create customer cost charts
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        # Bar chart of total cost by customer
+                        fig = px.bar(
+                            customer_costs.head(10),
+                            x='primary_customer',
+                            y='total_cost',
+                            title="Total Cost by Customer (Top 10)",
+                            labels={'primary_customer': "Customer", 'total_cost': "Total Cost"}
+                        )
+                        fig.update_layout(xaxis_tickangle=-45)
+                        st.plotly_chart(fig)
+                    
+                    with col2:
+                        # Bar chart of cost per order by customer
+                        fig = px.bar(
+                            customer_costs.head(10),
+                            x='primary_customer',
+                            y='cost_per_order',
+                            title="Cost per Order by Customer (Top 10)",
+                            labels={'primary_customer': "Customer", 'cost_per_order': "Cost per Order"}
+                        )
+                        fig.update_layout(xaxis_tickangle=-45)
+                        st.plotly_chart(fig)
+                    
+                    # Handle NaN values in the size parameter
+                    customer_costs_clean = customer_costs.copy()
+                    customer_costs_clean['driver_count'] = customer_costs_clean['driver_count'].fillna(1)
+                    
+                    # Bubble chart showing the relationship between total orders, drivers, and cost
+                    fig = px.scatter(
+                        customer_costs_clean,
+                        x='total_orders',
+                        y='total_cost',
+                        size='driver_count',
+                        color='cost_per_order',
+                        hover_name='primary_customer',
+                        title="Customer Cost Efficiency Analysis",
+                        labels={
+                            'total_orders': "Total Orders", 
+                            'total_cost': "Total Cost",
+                            'driver_count': "Number of Drivers",
+                            'cost_per_order': "Cost per Order"
+                        }
+                    )
+                    st.plotly_chart(fig)
+            except Exception as e:
+                st.error(f"Error in customer cost analysis: {e}")
+    
+    with cost_tabs[3]:
+        st.subheader("Vehicle Analysis")
+        
+        # Identify vehicle/model column
+        vehicle_col = None
+        for col in costs_df.columns:
+            if 'registration' in col.lower() or 'vehicle' in col.lower() or 'model' in col.lower():
+                vehicle_col = col
+                break
+        
+        if vehicle_col and cost_col and total_orders_col:
+            try:
+                # Group by vehicle type
+                vehicle_metrics = costs_df.groupby(vehicle_col).agg(
+                    total_cost=(cost_col, 'sum'),
+                    total_orders=(total_orders_col, 'sum'),
+                    driver_count=(driver_id_col, 'nunique')
+                ).reset_index()
+                
+                # Calculate efficiency metrics
+                vehicle_metrics['cost_per_order'] = vehicle_metrics['total_cost'] / vehicle_metrics['total_orders']
+                vehicle_metrics['orders_per_driver'] = vehicle_metrics['total_orders'] / vehicle_metrics['driver_count']
+                vehicle_metrics['cost_per_driver'] = vehicle_metrics['total_cost'] / vehicle_metrics['driver_count']
+                
+                # Sort by total cost
+                vehicle_metrics = vehicle_metrics.sort_values('total_cost', ascending=False)
+                
+                # Display vehicle metrics table
+                st.dataframe(vehicle_metrics)
+                
+                # Create vehicle comparison charts
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    # Bar chart of cost per order by vehicle
+                    fig = px.bar(
+                        vehicle_metrics,
+                        x=vehicle_col,
+                        y='cost_per_order',
+                        title="Cost per Order by Vehicle Type",
+                        labels={vehicle_col: "Vehicle Type", 'cost_per_order': "Cost per Order"}
+                    )
+                    fig.update_layout(xaxis_tickangle=-45)
+                    st.plotly_chart(fig)
+                
+                with col2:
+                    # Bar chart of orders per driver by vehicle
+                    fig = px.bar(
+                        vehicle_metrics,
+                        x=vehicle_col,
+                        y='orders_per_driver',
+                        title="Orders per Driver by Vehicle Type",
+                        labels={vehicle_col: "Vehicle Type", 'orders_per_driver': "Orders per Driver"}
+                    )
+                    fig.update_layout(xaxis_tickangle=-45)
+                    st.plotly_chart(fig)
+                
+                # Handle NaN values in the size parameter
+                vehicle_metrics_clean = vehicle_metrics.copy()
+                vehicle_metrics_clean['driver_count'] = vehicle_metrics_clean['driver_count'].fillna(1)
+                
+                # Vehicle efficiency bubble chart
+                fig = px.scatter(
+                    vehicle_metrics_clean,
+                    x='cost_per_driver',
+                    y='orders_per_driver',
+                    size='driver_count',
+                    color='cost_per_order',
+                    hover_name=vehicle_col,
+                    text=vehicle_col,
+                    title="Vehicle Type Efficiency Analysis",
+                    labels={
+                        'cost_per_driver': "Cost per Driver", 
+                        'orders_per_driver': "Orders per Driver",
+                        'driver_count': "Number of Drivers",
+                        'cost_per_order': "Cost per Order"
+                    }
+                )
+                st.plotly_chart(fig)
+                
+                # Driver efficiency by vehicle type
+                if 'model_name' in costs_df.columns and name_col:
+                    # Create a scatter plot of driver efficiency by vehicle type
+                    costs_df['orders_per_rupee'] = costs_df[total_orders_col] / costs_df[cost_col]
+                    
+                    fig = px.box(
+                        costs_df,
+                        x='model_name',
+                        y='orders_per_rupee',
+                        title="Driver Efficiency Distribution by Vehicle Type",
+                        labels={
+                            'model_name': "Vehicle Type", 
+                            'orders_per_rupee': "Orders per Rupee"
+                        }
+                    )
+                    st.plotly_chart(fig)
+                    
+                    # Show top drivers for each vehicle type
+                    st.subheader("Top Drivers by Vehicle Type")
+                    
+                    # Get unique vehicle types
+                    vehicle_types = costs_df['model_name'].unique()
+                    
+                    for vehicle in vehicle_types:
+                        # Get top 3 most efficient drivers for this vehicle type
+                        top_drivers = costs_df[costs_df['model_name'] == vehicle].sort_values('orders_per_rupee', ascending=False).head(3)
+                        
+                        if len(top_drivers) > 0:
+                            st.write(f"**{vehicle}**")
+                            st.dataframe(top_drivers[[name_col, total_orders_col, cost_col, 'orders_per_rupee']])
+            except Exception as e:
+                st.error(f"Error in vehicle analysis: {e}")
+        else:
+            st.error("Required columns for vehicle analysis not found.")
 
 # Add explanation of the visualizations
 with st.expander("About this tool"):
